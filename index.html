@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>toi.zip Creator</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.js"></script>
+<style>
+.group {border:1px solid #ccc; margin:10px 0; padding:10px;}
+.group-header {font-weight:bold; margin-bottom:5px;}
+.card {border:1px solid #aaa; margin:4px; padding:4px;}
+.drag-handle {cursor:move;}
+</style>
+</head>
+<body>
+<h3>ZIP Upload</h3>
+<input id="zipInput" type="file" accept=".zip">
+<hr>
+<div id="groups"></div>
+<button id="downloadBtn" disabled>toi.zip Download</button>
+
+<script>
+const groupsDiv = document.getElementById('groups');
+const downloadBtn = document.getElementById('downloadBtn');
+let entryList=[]; // {groupDom, createdAtInput, cards: [{imageName, blob, titleInput, contentInput}]}
+
+zipInput.addEventListener('change', async(e)=>{
+  groupsDiv.innerHTML='';
+  entryList=[];
+  if(!e.target.files[0]) return;
+  const buf = await e.target.files[0].arrayBuffer();
+  const zip = await JSZip.loadAsync(buf);
+
+  // JSONファイル名固定 memo_data.json
+  const metaFile = zip.file('memo_data.json')[0];
+  if(!metaFile){ alert('memo_data.json not found'); return;}
+  const json = JSON.parse(await metaFile.async('string'));
+
+  // 作成日毎にグループ化
+  const dateMap = {};
+  for(const item of json){
+    const date = item.createdAt.slice(0,10);
+    if(!dateMap[date]) dateMap[date]=[];
+    dateMap[date].push(item);
+  }
+  // グループUI生成
+  for(const date of Object.keys(dateMap)){
+    const group = document.createElement('div'); group.className='group';
+    // header
+    const header = document.createElement('div'); header.className='group-header';
+    header.innerHTML=`<span class="drag-handle">☰</span> <input type="date" value="${date}">`;
+    group.appendChild(header);
+
+    const cardContainer = document.createElement('div');
+    group.appendChild(cardContainer);
+
+    const cards=[];
+    for(const obj of dateMap[date]){
+      const imageName = obj.imagePaths[0].split('/').pop(); // 画像名
+      const file= zip.file(new RegExp(imageName+'$'))[0];
+      if(!file) continue;
+      const blob= await file.async('blob');
+
+      const card = document.createElement('div');  card.className='card';
+      const img= document.createElement('img');  img.src=URL.createObjectURL(blob); img.width=80;
+      const t= document.createElement('input'); t.placeholder='title'; t.value=obj.title||'';
+      const c= document.createElement('textarea'); c.placeholder='content'; c.rows=2; c.cols=30;c.value=obj.content||'';
+      card.append(img,document.createElement('br'),t,document.createElement('br'),c);
+      cardContainer.appendChild(card);
+
+      cards.push({imageName,blob,titleInput:t,contentInput:c,cardDom:card});
+    }
+    groupsDiv.appendChild(group);
+    entryList.push({groupDom:group, createdAtInput:header.querySelector('input'), cards});
+  }
+  downloadBtn.disabled=false;
+
+  // dragula 親グループ並べ替え
+  dragula([groupsDiv],{moves:(el,container,handle)=>handle.classList.contains('drag-handle')});
+  // 各グループ内カードを dragable
+  const containers= entryList.map(e=>e.groupDom.children[1]);
+  dragula(containers);
+});
+
+downloadBtn.addEventListener('click',async()=>{
+  const zipOut=new JSZip();
+  // 各グループ順に
+  for(const grp of entryList){
+    const base=grp.createdAtInput.value;
+    let n=1;
+    //画面にある順にカード走査（ドラッグ後反映済）
+    const cards = Array.from(grp.groupDom.children[1].children);
+    for(const cardDom of cards){
+      const cardObj = grp.cards.find(o=>o.cardDom===cardDom);
+      if(!cardObj) continue;
+      const folder= base+'-'+String(n).padStart(3,'0')+'/';
+      zipOut.file(folder+cardObj.imageName, cardObj.blob);
+      let title= cardObj.titleInput.value.trim() || 'untitled';
+      title=title.replace(/[\\\/:*?"<>|]/g,'_');
+      zipOut.file(folder+title+'.txt', cardObj.contentInput.value);
+      n++;
+    }
+  }
+  const blob= await zipOut.generateAsync({type:'blob'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='toi.zip';
+  a.click();
+});
+</script>
+</body>
+</html>
