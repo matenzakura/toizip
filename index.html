@@ -72,10 +72,11 @@ loadBtn.addEventListener('click', async()=>{
     showDebug('  ' + path);
   }
 
-  // 1) memo_data.json を ZIP全体から検索（階層無視）
+  // 1) memo_data.json を ZIP全体から検索（正確にマッチング）
   let metaPath=null;
   for(const path in zip.files){
-    if(path.toLowerCase().includes('memo_data.json')){
+    // 正確なファイル名マッチング
+    if(path === 'memo_data.json' || path.endsWith('/memo_data.json')){
       metaPath=path; 
       showDebug('memo_data.json発見: ' + path);
       break;
@@ -93,23 +94,50 @@ loadBtn.addEventListener('click', async()=>{
     showDebug('JSON内容のプレビュー: ' + jsonText.substring(0, 500) + '...');
     meta=JSON.parse(jsonText);
     showDebug('JSON解析成功、要素数: ' + (Array.isArray(meta) ? meta.length : 'オブジェクト'));
+    showDebug('JSON型: ' + typeof meta);
+    showDebug('最初の要素のプレビュー: ' + JSON.stringify(meta[0] || meta, null, 2).substring(0, 300));
   }catch(e){
     showErr('memo_data.json の読み込みに失敗しました: ' + e.message); 
+    showDebug('JSON解析エラー詳細: ' + e.stack);
     return;
   }
 
   // metaがオブジェクトの場合、配列に変換を試行
   if(!Array.isArray(meta)){
-    showDebug('metaは配列ではありません。オブジェクトの構造: ' + JSON.stringify(Object.keys(meta)));
-    // 可能性: {data: [...]} のような構造
-    if(meta.data && Array.isArray(meta.data)){
-      meta = meta.data;
-      showDebug('meta.dataを使用、要素数: ' + meta.length);
-    } else if(meta.items && Array.isArray(meta.items)){
-      meta = meta.items;
-      showDebug('meta.itemsを使用、要素数: ' + meta.length);
+    showDebug('metaは配列ではありません。型: ' + typeof meta);
+    showDebug('metaの内容: ' + JSON.stringify(meta, null, 2).substring(0, 500));
+    
+    if(meta === null || meta === undefined){
+      showErr('JSONデータがnullまたはundefinedです');
+      return;
+    }
+    
+    // オブジェクトの場合、プロパティを調べる
+    if(typeof meta === 'object'){
+      showDebug('オブジェクトのキー: ' + Object.keys(meta).join(', '));
+      // 一般的なラップパターンをチェック
+      if(meta.data && Array.isArray(meta.data)){
+        meta = meta.data;
+        showDebug('meta.dataを使用、要素数: ' + meta.length);
+      } else if(meta.items && Array.isArray(meta.items)){
+        meta = meta.items;
+        showDebug('meta.itemsを使用、要素数: ' + meta.length);
+      } else if(meta.memos && Array.isArray(meta.memos)){
+        meta = meta.memos;
+        showDebug('meta.memosを使用、要素数: ' + meta.length);
+      } else {
+        // オブジェクトを配列として扱えるかチェック
+        const values = Object.values(meta);
+        if(values.length > 0 && values[0] && typeof values[0] === 'object' && values[0].createdAt){
+          meta = values;
+          showDebug('オブジェクトの値を配列として使用、要素数: ' + meta.length);
+        } else {
+          showErr('メタデータが期待される配列形式ではありません。利用可能なプロパティ: ' + Object.keys(meta).join(', '));
+          return;
+        }
+      }
     } else {
-      showErr('メタデータが期待される配列形式ではありません');
+      showErr('予期しないデータ形式です: ' + typeof meta);
       return;
     }
   }
@@ -185,11 +213,38 @@ loadBtn.addEventListener('click', async()=>{
       const imageName=obj.imagePaths[0].split('/').pop();
       showDebug(`  抽出した画像名: ${imageName}`);
       
-      // -> images/固定 + imageName
-      const imageFullPath=Object.keys(zip.files).find(p=>p.toLowerCase().includes('images/'+imageName.toLowerCase()));
+      // -> images/ + imageName の正確なマッチング
+      let imageFullPath = null;
+      
+      // 1. 正確なパスでの検索
+      if(zip.files['images/' + imageName]){
+        imageFullPath = 'images/' + imageName;
+      } else {
+        // 2. 大文字小文字を無視した検索
+        for(const path in zip.files){
+          const pathLower = path.toLowerCase();
+          const targetLower = ('images/' + imageName).toLowerCase();
+          if(pathLower === targetLower){
+            imageFullPath = path;
+            break;
+          }
+        }
+      }
+      
+      // 3. それでも見つからない場合は、ファイル名のみで検索
+      if(!imageFullPath){
+        for(const path in zip.files){
+          if(path.toLowerCase().endsWith('images/' + imageName.toLowerCase())){
+            imageFullPath = path;
+            break;
+          }
+        }
+      }
+      
       if(!imageFullPath){
         showErr(`画像 ${imageName} がZIP内images/に見つかりません`);
         showDebug(`利用可能な画像ファイル: ${Object.keys(zip.files).filter(p=>p.toLowerCase().includes('images/')).join(', ')}`);
+        showDebug(`検索対象: images/${imageName}`);
         return;
       }
       
@@ -236,16 +291,7 @@ downloadBtn.addEventListener('click',async()=>{
         const o=grp.cards.find(x=>x.cardDom===d);
         if(!o)continue;
         const folder=base+'-'+String(n).padStart(3,'0')+'/';
-
-      let ext = o.imageName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g,''); // 拡張子を抽出して正規化
-      let imgName = '';
-      if (cardDoms.length === 1) {
-        imgName = `img.${ext}`;
-      } else {
-         imgName = `img${String(n).padStart(2,'0')}.${ext}`;
-      }
-      out.file(folder + imgName, o.blob); // ←新しいファイル名で出力
-
+        out.file(folder+o.imageName,o.blob);
         let title=o.titleInput.value.trim()||'untitled';
         title=title.replace(/[\\\/:*?"<>|]/g,'_');
         out.file(folder+title+'.txt',o.contentInput.value);
@@ -261,7 +307,6 @@ downloadBtn.addEventListener('click',async()=>{
     showErr('ZIP出力中に失敗: '+e.message);
   }
 });
-
 </script>
 </body>
 </html>
