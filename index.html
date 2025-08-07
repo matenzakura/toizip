@@ -236,7 +236,16 @@ downloadBtn.addEventListener('click',async()=>{
         const o=grp.cards.find(x=>x.cardDom===d);
         if(!o)continue;
         const folder=base+'-'+String(n).padStart(3,'0')+'/';
-        out.file(folder+o.imageName,o.blob);
+
+      let ext = o.imageName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g,''); // 拡張子を抽出して正規化
+      let imgName = '';
+      if (cardDoms.length === 1) {
+        imgName = `img.${ext}`;
+      } else {
+         imgName = `img${String(n).padStart(2,'0')}.${ext}`;
+      }
+      out.file(folder + imgName, o.blob); // ←新しいファイル名で出力
+
         let title=o.titleInput.value.trim()||'untitled';
         title=title.replace(/[\\\/:*?"<>|]/g,'_');
         out.file(folder+title+'.txt',o.contentInput.value);
@@ -252,6 +261,7 @@ downloadBtn.addEventListener('click',async()=>{
     showErr('ZIP出力中に失敗: '+e.message);
   }
 });
+
 </script>
 </body>
 </html>
