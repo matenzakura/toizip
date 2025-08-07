@@ -2,320 +2,557 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>toi.zip Creator (デバッグ強化版)</title>
+<title>toi.zip Creator (2段階編集・数字並び替え対応版)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.js"></script>
 <style>
 .group {border:1px solid #ccc; margin:10px 0; padding:10px;}
 .group-header {font-weight:bold; margin-bottom:5px;}
-.card {border:1px solid #aaa; margin:4px; padding:4px;}
+.card {border:1px solid #aaa; margin:4px; padding:4px; position: relative;}
+.card-simple {border:1px solid #aaa; margin:2px; padding:2px; display: inline-block; position: relative; width: 150px; text-align: center;}
 .drag-handle {cursor:move;}
+.card-number {position: absolute; top: 2px; left: 2px; background: rgba(0,0,0,0.7); color: white; padding: 2px 4px; font-size: 12px; border-radius: 3px;}
+.move-controls {margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px;}
+.move-input {width: 50px; margin: 0 5px;}
+.phase-buttons {margin: 15px 0; text-align: center;}
+.phase-buttons button {margin: 0 10px; padding: 10px 20px; font-size: 14px;}
+.simple-grid {display: flex; flex-wrap: wrap; gap: 5px;}
 #errorMsg {color:red; margin-top:8px; white-space: pre-wrap;}
 #debugInfo {background: #f0f0f0; padding: 10px; margin: 10px 0; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;}
+.hidden {display: none;}
 </style>
 </head>
 <body>
-<h3>ZIP Upload (デバッグ版)</h3>
+<h3>ZIP Upload (2段階編集版)</h3>
 <input id="zipInput" type="file" accept=".zip">
 <button id="loadBtn">読み込む</button>
 <div id="errorMsg"></div>
 <div id="debugInfo"></div>
+
+<div class="phase-buttons">
+  <button id="phase1Btn" class="hidden">1. 画像並び替え</button>
+  <button id="phase2Btn" class="hidden">2. タイトル・本文入力</button>
+</div>
+
 <hr>
-<div id="groups"></div>
-<button id="downloadBtn" disabled>toi.zip Download</button>
+
+<!-- フェーズ1: 画像のみの並び替え -->
+<div id="phase1Content" class="hidden">
+  <h4>ステップ1: 画像の並び替え</h4>
+  <div class="move-controls">
+    <strong>数字で移動:</strong>
+    <input type="number" id="fromPos" class="move-input" placeholder="から" min="1">
+    <span>番目を</span>
+    <input type="number" id="toPos" class="move-input" placeholder="へ" min="1">
+    <span>番目へ</span>
+    <button id="moveBtn">移動</button>
+  </div>
+  <div id="simpleGroups"></div>
+  <div style="text-align: center; margin: 20px 0;">
+    <button id="proceedBtn" style="padding: 15px 30px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px;">次へ: タイトル・本文を入力</button>
+  </div>
+</div>
+
+<!-- フェーズ2: 詳細編集 -->
+<div id="phase2Content" class="hidden">
+  <h4>ステップ2: タイトル・本文の編集</h4>
+  <div class="move-controls">
+    <strong>数字で移動:</strong>
+    <input type="number" id="fromPos2" class="move-input" placeholder="から" min="1">
+    <span>番目を</span>
+    <input type="number" id="toPos2" class="move-input" placeholder="へ" min="1">
+    <span>番目へ</span>
+    <button id="moveBtn2">移動</button>
+  </div>
+  <div id="detailGroups"></div>
+  <button id="downloadBtn" disabled style="padding: 15px 30px; font-size: 16px; background: #28a745; color: white; border: none; border-radius: 5px;">toi.zip Download</button>
+</div>
 
 <script>
-const groupsDiv=document.getElementById('groups');
-const zipInput=document.getElementById('zipInput');
-const loadBtn=document.getElementById('loadBtn');
-const errorMsg=document.getElementById('errorMsg');
-const debugInfo=document.getElementById('debugInfo');
-const downloadBtn=document.getElementById('downloadBtn');
+const simpleGroupsDiv = document.getElementById('simpleGroups');
+const detailGroupsDiv = document.getElementById('detailGroups');
+const zipInput = document.getElementById('zipInput');
+const loadBtn = document.getElementById('loadBtn');
+const errorMsg = document.getElementById('errorMsg');
+const debugInfo = document.getElementById('debugInfo');
+const downloadBtn = document.getElementById('downloadBtn');
 
-let entryList=[];
+const phase1Content = document.getElementById('phase1Content');
+const phase2Content = document.getElementById('phase2Content');
+const phase1Btn = document.getElementById('phase1Btn');
+const phase2Btn = document.getElementById('phase2Btn');
+const proceedBtn = document.getElementById('proceedBtn');
 
-function showErr(msg){
-  errorMsg.textContent=msg;
+const fromPos = document.getElementById('fromPos');
+const toPos = document.getElementById('toPos');
+const moveBtn = document.getElementById('moveBtn');
+const fromPos2 = document.getElementById('fromPos2');
+const toPos2 = document.getElementById('toPos2');
+const moveBtn2 = document.getElementById('moveBtn2');
+
+let entryList = [];
+let currentPhase = 1;
+
+function showErr(msg) {
+  errorMsg.textContent = msg;
 }
 
-function showDebug(msg){
+function showDebug(msg) {
   debugInfo.innerHTML += msg + '\n';
 }
 
-function clearDebug(){
+function clearDebug() {
   debugInfo.innerHTML = '';
 }
 
-loadBtn.addEventListener('click', async()=>{
-  errorMsg.textContent='';
-  clearDebug();
-  groupsDiv.innerHTML='';
-  entryList=[];
-  downloadBtn.disabled=true;
+function switchPhase(phase) {
+  currentPhase = phase;
+  if (phase === 1) {
+    phase1Content.classList.remove('hidden');
+    phase2Content.classList.add('hidden');
+    phase1Btn.style.background = '#007bff';
+    phase1Btn.style.color = 'white';
+    phase2Btn.style.background = '';
+    phase2Btn.style.color = '';
+  } else {
+    phase1Content.classList.add('hidden');
+    phase2Content.classList.remove('hidden');
+    phase1Btn.style.background = '';
+    phase1Btn.style.color = '';
+    phase2Btn.style.background = '#007bff';
+    phase2Btn.style.color = 'white';
+  }
+}
 
-  if(!zipInput.files[0]){ showErr('ZIPファイルが選択されていません'); return; }
+function updateCardNumbers() {
+  if (currentPhase === 1) {
+    const cards = simpleGroupsDiv.querySelectorAll('.card-simple');
+    cards.forEach((card, index) => {
+      const numberEl = card.querySelector('.card-number');
+      if (numberEl) {
+        numberEl.textContent = index + 1;
+      }
+    });
+    fromPos.max = toPos.max = cards.length;
+  } else {
+    entryList.forEach(grp => {
+      const cardContainer = grp.groupDom.children[1];
+      const cards = cardContainer.children;
+      for (let i = 0; i < cards.length; i++) {
+        const numberEl = cards[i].querySelector('.card-number');
+        if (numberEl) {
+          numberEl.textContent = i + 1;
+        }
+      }
+    });
+  }
+}
+
+function moveCard(from, to, container) {
+  const cards = Array.from(container.children);
+  if (from < 1 || from > cards.length || to < 1 || to > cards.length) {
+    showErr('移動位置が無効です');
+    return false;
+  }
+  
+  const fromIndex = from - 1;
+  const toIndex = to - 1;
+  
+  if (fromIndex === toIndex) return true;
+  
+  const cardToMove = cards[fromIndex];
+  
+  // 要素を移動
+  if (fromIndex < toIndex) {
+    container.insertBefore(cardToMove, cards[toIndex + 1]);
+  } else {
+    container.insertBefore(cardToMove, cards[toIndex]);
+  }
+  
+  updateCardNumbers();
+  return true;
+}
+
+// 数字移動ボタンのイベント
+moveBtn.addEventListener('click', () => {
+  const from = parseInt(fromPos.value);
+  const to = parseInt(toPos.value);
+  if (isNaN(from) || isNaN(to)) {
+    showErr('移動位置を数字で入力してください');
+    return;
+  }
+  
+  if (moveCard(from, to, simpleGroupsDiv)) {
+    fromPos.value = '';
+    toPos.value = '';
+    showErr('');
+  }
+});
+
+moveBtn2.addEventListener('click', () => {
+  const from = parseInt(fromPos2.value);
+  const to = parseInt(toPos2.value);
+  if (isNaN(from) || isNaN(to)) {
+    showErr('移動位置を数字で入力してください');
+    return;
+  }
+  
+  // 全カードを通しての移動
+  const allCards = [];
+  entryList.forEach(grp => {
+    const cardContainer = grp.groupDom.children[1];
+    allCards.push(...Array.from(cardContainer.children));
+  });
+  
+  if (from < 1 || from > allCards.length || to < 1 || to > allCards.length) {
+    showErr('移動位置が無効です');
+    return;
+  }
+  
+  const fromIndex = from - 1;
+  const toIndex = to - 1;
+  
+  if (fromIndex !== toIndex) {
+    const cardToMove = allCards[fromIndex];
+    const targetCard = allCards[toIndex];
+    
+    // 移動先のコンテナを特定
+    let targetContainer = null;
+    entryList.forEach(grp => {
+      const cardContainer = grp.groupDom.children[1];
+      if (cardContainer.contains(targetCard)) {
+        targetContainer = cardContainer;
+      }
+    });
+    
+    if (targetContainer) {
+      if (fromIndex < toIndex) {
+        targetContainer.insertBefore(cardToMove, targetCard.nextSibling);
+      } else {
+        targetContainer.insertBefore(cardToMove, targetCard);
+      }
+      updateCardNumbers();
+    }
+  }
+  
+  fromPos2.value = '';
+  toPos2.value = '';
+  showErr('');
+});
+
+// フェーズ切り替えボタン
+phase1Btn.addEventListener('click', () => switchPhase(1));
+phase2Btn.addEventListener('click', () => switchPhase(2));
+
+// 次へボタン
+proceedBtn.addEventListener('click', () => {
+  // 並び順を保持して詳細編集画面を構築
+  buildDetailView();
+  switchPhase(2);
+});
+
+function buildDetailView() {
+  detailGroupsDiv.innerHTML = '';
+  
+  // simpleGroupsからの順序を取得
+  const simpleCards = Array.from(simpleGroupsDiv.children);
+  
+  // 日付ごとにグループ化し直し
+  const dateGroups = {};
+  simpleCards.forEach(card => {
+    const cardData = card.cardData;
+    const date = card.dateInput.value;
+    
+    if (!dateGroups[date]) {
+      dateGroups[date] = [];
+    }
+    dateGroups[date].push(cardData);
+  });
+  
+  entryList = [];
+  
+  // 詳細編集用のUIを構築
+  Object.keys(dateGroups).forEach(date => {
+    const group = document.createElement('div');
+    group.className = 'group';
+    
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    header.innerHTML = `<span class="drag-handle">☰</span> <input type="date" value="${date}">`;
+    group.appendChild(header);
+    
+    const cardContainer = document.createElement('div');
+    group.appendChild(cardContainer);
+    
+    const cards = [];
+    dateGroups[date].forEach((cardData, index) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      
+      const numberDiv = document.createElement('div');
+      numberDiv.className = 'card-number';
+      numberDiv.textContent = '1'; // updateCardNumbers()で更新される
+      
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(cardData.blob);
+      img.width = 80;
+      
+      const titleInput = document.createElement('input');
+      titleInput.placeholder = 'title';
+      titleInput.value = cardData.originalData.title || '';
+      
+      const contentTextarea = document.createElement('textarea');
+      contentTextarea.placeholder = 'content';
+      contentTextarea.rows = 2;
+      contentTextarea.cols = 30;
+      contentTextarea.value = cardData.originalData.content || '';
+      
+      card.appendChild(numberDiv);
+      card.appendChild(img);
+      card.appendChild(document.createElement('br'));
+      card.appendChild(titleInput);
+      card.appendChild(document.createElement('br'));
+      card.appendChild(contentTextarea);
+      
+      cardContainer.appendChild(card);
+      cards.push({
+        imageName: cardData.imageName,
+        blob: cardData.blob,
+        titleInput: titleInput,
+        contentInput: contentTextarea,
+        cardDom: card
+      });
+    });
+    
+    detailGroupsDiv.appendChild(group);
+    entryList.push({
+      groupDom: group,
+      createdAtInput: header.querySelector('input'),
+      cards: cards
+    });
+  });
+  
+  updateCardNumbers();
+  downloadBtn.disabled = false;
+  
+  // ドラッグ機能を再設定
+  dragula([detailGroupsDiv], {moves: (el, c, handle) => handle.classList.contains('drag-handle')});
+  const containers = entryList.map(e => e.groupDom.children[1]);
+  dragula(containers).on('drop', updateCardNumbers);
+}
+
+loadBtn.addEventListener('click', async () => {
+  errorMsg.textContent = '';
+  clearDebug();
+  simpleGroupsDiv.innerHTML = '';
+  detailGroupsDiv.innerHTML = '';
+  entryList = [];
+  downloadBtn.disabled = true;
+  
+  // フェーズボタンを非表示
+  phase1Btn.classList.add('hidden');
+  phase2Btn.classList.add('hidden');
+  phase1Content.classList.add('hidden');
+  phase2Content.classList.add('hidden');
+
+  if (!zipInput.files[0]) {
+    showErr('ZIPファイルが選択されていません');
+    return;
+  }
 
   let zip;
-  try{
-    const buf=await zipInput.files[0].arrayBuffer();
-    zip=await JSZip.loadAsync(buf);
+  try {
+    const buf = await zipInput.files[0].arrayBuffer();
+    zip = await JSZip.loadAsync(buf);
     showDebug('ZIP読み込み成功');
-  }catch(e){
-    showErr('ZIP解析に失敗しました: '+e.message);
+  } catch (e) {
+    showErr('ZIP解析に失敗しました: ' + e.message);
     return;
   }
 
   // ZIPの内容を表示
   showDebug('ZIP内のファイル一覧:');
-  for(const path in zip.files){
+  for (const path in zip.files) {
     showDebug('  ' + path);
   }
 
-  // 1) memo_data.json を ZIP全体から検索（正確にマッチング）
-  let metaPath=null;
-  for(const path in zip.files){
-    // 正確なファイル名マッチング
-    if(path === 'memo_data.json' || path.endsWith('/memo_data.json')){
-      metaPath=path; 
+  // memo_data.json を ZIP全体から検索
+  let metaPath = null;
+  for (const path in zip.files) {
+    if (path === 'memo_data.json' || path.endsWith('/memo_data.json')) {
+      metaPath = path;
       showDebug('memo_data.json発見: ' + path);
       break;
     }
   }
-  if(!metaPath){ 
-    showErr('memo_data.json が見つかりません'); 
-    showDebug('memo_data.jsonが見つかりませんでした');
-    return; 
-  }
-
-  let meta;
-  try{
-    const jsonText = await zip.file(metaPath).async('string');
-    showDebug('JSON内容のプレビュー: ' + jsonText.substring(0, 500) + '...');
-    meta=JSON.parse(jsonText);
-    showDebug('JSON解析成功、要素数: ' + (Array.isArray(meta) ? meta.length : 'オブジェクト'));
-    showDebug('JSON型: ' + typeof meta);
-    showDebug('最初の要素のプレビュー: ' + JSON.stringify(meta[0] || meta, null, 2).substring(0, 300));
-  }catch(e){
-    showErr('memo_data.json の読み込みに失敗しました: ' + e.message); 
-    showDebug('JSON解析エラー詳細: ' + e.stack);
+  if (!metaPath) {
+    showErr('memo_data.json が見つかりません');
     return;
   }
 
-  // metaがオブジェクトの場合、配列に変換を試行
-  if(!Array.isArray(meta)){
-    showDebug('metaは配列ではありません。型: ' + typeof meta);
-    showDebug('metaの内容: ' + JSON.stringify(meta, null, 2).substring(0, 500));
-    
-    if(meta === null || meta === undefined){
-      showErr('JSONデータがnullまたはundefinedです');
-      return;
-    }
-    
-    // オブジェクトの場合、プロパティを調べる
-    if(typeof meta === 'object'){
-      showDebug('オブジェクトのキー: ' + Object.keys(meta).join(', '));
-      // 一般的なラップパターンをチェック
-      if(meta.data && Array.isArray(meta.data)){
+  let meta;
+  try {
+    const jsonText = await zip.file(metaPath).async('string');
+    showDebug('JSON内容のプレビュー: ' + jsonText.substring(0, 500) + '...');
+    meta = JSON.parse(jsonText);
+    showDebug('JSON解析成功、要素数: ' + (Array.isArray(meta) ? meta.length : 'オブジェクト'));
+  } catch (e) {
+    showErr('memo_data.json の読み込みに失敗しました: ' + e.message);
+    return;
+  }
+
+  // metaが配列でない場合の処理
+  if (!Array.isArray(meta)) {
+    if (meta && typeof meta === 'object') {
+      if (meta.data && Array.isArray(meta.data)) {
         meta = meta.data;
-        showDebug('meta.dataを使用、要素数: ' + meta.length);
-      } else if(meta.items && Array.isArray(meta.items)){
+      } else if (meta.items && Array.isArray(meta.items)) {
         meta = meta.items;
-        showDebug('meta.itemsを使用、要素数: ' + meta.length);
-      } else if(meta.memos && Array.isArray(meta.memos)){
+      } else if (meta.memos && Array.isArray(meta.memos)) {
         meta = meta.memos;
-        showDebug('meta.memosを使用、要素数: ' + meta.length);
       } else {
-        // オブジェクトを配列として扱えるかチェック
         const values = Object.values(meta);
-        if(values.length > 0 && values[0] && typeof values[0] === 'object' && values[0].createdAt){
+        if (values.length > 0 && values[0] && typeof values[0] === 'object' && values[0].createdAt) {
           meta = values;
-          showDebug('オブジェクトの値を配列として使用、要素数: ' + meta.length);
         } else {
-          showErr('メタデータが期待される配列形式ではありません。利用可能なプロパティ: ' + Object.keys(meta).join(', '));
+          showErr('メタデータが期待される配列形式ではありません');
           return;
         }
       }
     } else {
-      showErr('予期しないデータ形式です: ' + typeof meta);
+      showErr('予期しないデータ形式です');
       return;
     }
   }
 
-  // 各要素をチェック
-  showDebug('各要素のチェック開始');
-  for(let i = 0; i < Math.min(meta.length, 3); i++){
+  // 各画像を個別のアイテムとして処理
+  const allItems = [];
+  for (let i = 0; i < meta.length; i++) {
     const item = meta[i];
-    showDebug(`要素${i}: createdAt=${item?.createdAt}, imagePaths=${JSON.stringify(item?.imagePaths)}`);
-  }
-
-  // 親=createdAtごとにグループ化（1画像1グループに変更）
-  const map={};
-  for(let i = 0; i < meta.length; i++){
-    const item = meta[i];
-    showDebug(`処理中の要素${i}: ${JSON.stringify(item)}`);
-    
-    if(!item || typeof item !== 'object'){
-      showErr(`要素${i}が無効です: ${JSON.stringify(item)}`); 
-      return;
+    if (!item || !item.createdAt || !item.imagePaths || !Array.isArray(item.imagePaths)) {
+      continue;
     }
     
-    if(!item.createdAt){ 
-      showErr(`要素${i}にcreatedAtがありません: ${JSON.stringify(item)}`); 
-      return; 
-    }
-    
-    if(!item.imagePaths){
-      showErr(`要素${i}にimagePathsがありません: ${JSON.stringify(item)}`); 
-      return;
-    }
-    
-    if(!Array.isArray(item.imagePaths)){
-      showErr(`要素${i}のimagePathsが配列ではありません: ${JSON.stringify(item.imagePaths)}`); 
-      return;
-    }
-    
-    if(item.imagePaths.length === 0){
-      showErr(`要素${i}のimagePathsが空の配列です`); 
-      return;
-    }
-    
-    if(!item.imagePaths[0]){ 
-      showErr(`要素${i}のimagePaths[0]が無効です: ${JSON.stringify(item.imagePaths[0])}`); 
-      return;
-    }
-
-    // 各画像を個別のアイテムとして扱う
-    for(let imgIdx = 0; imgIdx < item.imagePaths.length; imgIdx++) {
+    for (let imgIdx = 0; imgIdx < item.imagePaths.length; imgIdx++) {
       const imagePath = item.imagePaths[imgIdx];
-      const date = item.createdAt.slice(0,10);
-      const uniqueKey = `${date}-${i}-${imgIdx}`; // ユニークキーを生成
+      const imageName = imagePath.split('/').pop();
+      const date = item.createdAt.slice(0, 10);
       
-      if(!map[uniqueKey]) map[uniqueKey] = [];
-      map[uniqueKey].push({
-        ...item,
-        imagePaths: [imagePath], // 単一画像のみ
-        originalIndex: i,
-        imageIndex: imgIdx
-      });
-    }
-  }
-
-  showDebug('グループ化完了: ' + Object.keys(map).join(', '));
-
-  // 読み込み & UI生成
-  for(const date of Object.keys(map)){
-    showDebug(`日付${date}のグループ処理開始`);
-    
-    const group=document.createElement('div'); group.className='group';
-    const header=document.createElement('div'); header.className='group-header';
-    header.innerHTML=`<span class="drag-handle">☰</span> <input type="date" value="${date}">`;
-    group.appendChild(header);
-
-    const cardContainer=document.createElement('div');
-    group.appendChild(cardContainer);
-
-    const cards=[];
-    for(let j = 0; j < map[date].length; j++){
-      const obj = map[date][j];
-      showDebug(`  カード${j}処理中: imagePaths[0] = ${obj.imagePaths[0]}`);
-      
-      // imagePaths例: "/data/.../images/aaa.jpeg" → 後ろのファイル名を抽出
-      const imageName=obj.imagePaths[0].split('/').pop();
-      showDebug(`  抽出した画像名: ${imageName}`);
-      
-      // -> images/ + imageName の正確なマッチング
+      // 画像ファイルを検索
       let imageFullPath = null;
-      
-      // 1. 正確なパスでの検索
-      if(zip.files['images/' + imageName]){
+      if (zip.files['images/' + imageName]) {
         imageFullPath = 'images/' + imageName;
       } else {
-        // 2. 大文字小文字を無視した検索
-        for(const path in zip.files){
+        for (const path in zip.files) {
           const pathLower = path.toLowerCase();
           const targetLower = ('images/' + imageName).toLowerCase();
-          if(pathLower === targetLower){
+          if (pathLower === targetLower) {
             imageFullPath = path;
             break;
           }
         }
       }
       
-      // 3. それでも見つからない場合は、ファイル名のみで検索
-      if(!imageFullPath){
-        for(const path in zip.files){
-          if(path.toLowerCase().endsWith('images/' + imageName.toLowerCase())){
+      if (!imageFullPath) {
+        for (const path in zip.files) {
+          if (path.toLowerCase().endsWith('images/' + imageName.toLowerCase())) {
             imageFullPath = path;
             break;
           }
         }
       }
       
-      if(!imageFullPath){
-        showErr(`画像 ${imageName} がZIP内images/に見つかりません`);
-        showDebug(`利用可能な画像ファイル: ${Object.keys(zip.files).filter(p=>p.toLowerCase().includes('images/')).join(', ')}`);
-        showDebug(`検索対象: images/${imageName}`);
-        return;
-      }
-      
-      showDebug(`  画像ファイルパス: ${imageFullPath}`);
-      
-      try {
-        const blob=await zip.file(imageFullPath).async('blob');
-        showDebug(`  画像読み込み成功: ${blob.size} bytes`);
-
-        // カードUI
-        const card=document.createElement('div'); card.className='card';
-        const img=document.createElement('img'); img.src=URL.createObjectURL(blob); img.width=80;
-        const t=document.createElement('input'); t.placeholder='title'; t.value=obj.title||'';
-        const c=document.createElement('textarea'); c.placeholder='content'; c.rows=2; c.cols=30; c.value=obj.content||'';
-        card.append(img,document.createElement('br'),t,document.createElement('br'),c);
-        cardContainer.appendChild(card);
-        cards.push({imageName,blob,titleInput:t,contentInput:c,cardDom:card});
-      } catch(e) {
-        showErr(`画像${imageName}の読み込みに失敗: ${e.message}`);
-        return;
+      if (imageFullPath) {
+        try {
+          const blob = await zip.file(imageFullPath).async('blob');
+          allItems.push({
+            imageName: imageName,
+            blob: blob,
+            originalData: item,
+            date: date,
+            imageFullPath: imageFullPath
+          });
+        } catch (e) {
+          showErr(`画像${imageName}の読み込みに失敗: ${e.message}`);
+          return;
+        }
       }
     }
-    groupsDiv.appendChild(group);
-    entryList.push({groupDom:group,createdAtInput:header.querySelector('input'),cards});
   }
 
-  showDebug('UI生成完了');
-  downloadBtn.disabled=false;
+  // シンプル表示用UIを構築
+  allItems.forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'card-simple';
+    
+    const numberDiv = document.createElement('div');
+    numberDiv.className = 'card-number';
+    numberDiv.textContent = index + 1;
+    
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(item.blob);
+    img.width = 140;
+    img.height = 100;
+    img.style.objectFit = 'cover';
+    
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = item.date;
+    dateInput.style.width = '100%';
+    dateInput.style.marginTop = '5px';
+    
+    card.appendChild(numberDiv);
+    card.appendChild(img);
+    card.appendChild(document.createElement('br'));
+    card.appendChild(dateInput);
+    
+    // データを保持
+    card.cardData = item;
+    card.dateInput = dateInput;
+    
+    simpleGroupsDiv.appendChild(card);
+  });
 
-  dragula([groupsDiv],{moves:(el,c,handle)=>handle.classList.contains('drag-handle')});
-  const containers=entryList.map(e=>e.groupDom.children[1]);
-  dragula(containers);
+  // ドラッグ機能を設定
+  dragula([simpleGroupsDiv]).on('drop', updateCardNumbers);
+  
+  updateCardNumbers();
+  
+  // フェーズ1を表示
+  phase1Btn.classList.remove('hidden');
+  phase2Btn.classList.remove('hidden');
+  switchPhase(1);
+  
+  showDebug('読み込み完了');
 });
 
-downloadBtn.addEventListener('click',async()=>{
-  errorMsg.textContent='';
-  const out=new JSZip();
-  try{
-    for(const grp of entryList){
-      const base=grp.createdAtInput.value;
-      let n=1;
-      const cardDoms=Array.from(grp.groupDom.children[1].children);
-      for(const d of cardDoms){
-        const o=grp.cards.find(x=>x.cardDom===d);
-        if(!o)continue;
-        const folder=base+'-'+String(n).padStart(3,'0')+'/';
-        out.file(folder+o.imageName,o.blob);
-        let title=o.titleInput.value.trim()||'untitled';
-        title=title.replace(/[\\\/:*?"<>|]/g,'_');
-        out.file(folder+title+'.txt',o.contentInput.value);
+downloadBtn.addEventListener('click', async () => {
+  errorMsg.textContent = '';
+  const out = new JSZip();
+  try {
+    for (const grp of entryList) {
+      const base = grp.createdAtInput.value;
+      let n = 1;
+      const cardDoms = Array.from(grp.groupDom.children[1].children);
+      for (const d of cardDoms) {
+        const o = grp.cards.find(x => x.cardDom === d);
+        if (!o) continue;
+        const folder = base + '-' + String(n).padStart(3, '0') + '/';
+        out.file(folder + o.imageName, o.blob);
+        let title = o.titleInput.value.trim() || 'untitled';
+        title = title.replace(/[\\\/:*?"<>|]/g, '_');
+        out.file(folder + title + '.txt', o.contentInput.value);
         n++;
       }
     }
-    const blob=await out.generateAsync({type:'blob'});
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='toi.zip';
+    const blob = await out.generateAsync({type: 'blob'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'toi.zip';
     a.click();
-  }catch(e){
-    showErr('ZIP出力中に失敗: '+e.message);
+  } catch (e) {
+    showErr('ZIP出力中に失敗: ' + e.message);
   }
 });
 </script>
