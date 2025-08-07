@@ -149,7 +149,7 @@ loadBtn.addEventListener('click', async()=>{
     showDebug(`要素${i}: createdAt=${item?.createdAt}, imagePaths=${JSON.stringify(item?.imagePaths)}`);
   }
 
-  // 親=createdAtごとにグループ化
+  // 親=createdAtごとにグループ化（1画像1グループに変更）
   const map={};
   for(let i = 0; i < meta.length; i++){
     const item = meta[i];
@@ -185,9 +185,20 @@ loadBtn.addEventListener('click', async()=>{
       return;
     }
 
-    const date=item.createdAt.slice(0,10);
-    if(!map[date]) map[date]=[];
-    map[date].push(item);
+    // 各画像を個別のアイテムとして扱う
+    for(let imgIdx = 0; imgIdx < item.imagePaths.length; imgIdx++) {
+      const imagePath = item.imagePaths[imgIdx];
+      const date = item.createdAt.slice(0,10);
+      const uniqueKey = `${date}-${i}-${imgIdx}`; // ユニークキーを生成
+      
+      if(!map[uniqueKey]) map[uniqueKey] = [];
+      map[uniqueKey].push({
+        ...item,
+        imagePaths: [imagePath], // 単一画像のみ
+        originalIndex: i,
+        imageIndex: imgIdx
+      });
+    }
   }
 
   showDebug('グループ化完了: ' + Object.keys(map).join(', '));
