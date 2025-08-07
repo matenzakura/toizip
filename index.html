@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>toi.zip Creator (robust)</title>
+<title>toi.zip Creator (デバッグ強化版)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dragula/3.7.3/dragula.min.js"></script>
@@ -11,14 +11,16 @@
 .group-header {font-weight:bold; margin-bottom:5px;}
 .card {border:1px solid #aaa; margin:4px; padding:4px;}
 .drag-handle {cursor:move;}
-#errorMsg {color:red; margin-top:8px;}
+#errorMsg {color:red; margin-top:8px; white-space: pre-wrap;}
+#debugInfo {background: #f0f0f0; padding: 10px; margin: 10px 0; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;}
 </style>
 </head>
 <body>
-<h3>ZIP Upload</h3>
+<h3>ZIP Upload (デバッグ版)</h3>
 <input id="zipInput" type="file" accept=".zip">
 <button id="loadBtn">読み込む</button>
 <div id="errorMsg"></div>
+<div id="debugInfo"></div>
 <hr>
 <div id="groups"></div>
 <button id="downloadBtn" disabled>toi.zip Download</button>
@@ -28,6 +30,7 @@ const groupsDiv=document.getElementById('groups');
 const zipInput=document.getElementById('zipInput');
 const loadBtn=document.getElementById('loadBtn');
 const errorMsg=document.getElementById('errorMsg');
+const debugInfo=document.getElementById('debugInfo');
 const downloadBtn=document.getElementById('downloadBtn');
 
 let entryList=[];
@@ -36,8 +39,17 @@ function showErr(msg){
   errorMsg.textContent=msg;
 }
 
+function showDebug(msg){
+  debugInfo.innerHTML += msg + '\n';
+}
+
+function clearDebug(){
+  debugInfo.innerHTML = '';
+}
+
 loadBtn.addEventListener('click', async()=>{
   errorMsg.textContent='';
+  clearDebug();
   groupsDiv.innerHTML='';
   entryList=[];
   downloadBtn.disabled=true;
@@ -48,39 +60,114 @@ loadBtn.addEventListener('click', async()=>{
   try{
     const buf=await zipInput.files[0].arrayBuffer();
     zip=await JSZip.loadAsync(buf);
+    showDebug('ZIP読み込み成功');
   }catch(e){
     showErr('ZIP解析に失敗しました: '+e.message);
     return;
   }
 
+  // ZIPの内容を表示
+  showDebug('ZIP内のファイル一覧:');
+  for(const path in zip.files){
+    showDebug('  ' + path);
+  }
+
   // 1) memo_data.json を ZIP全体から検索（階層無視）
   let metaPath=null;
   for(const path in zip.files){
-    if(path.toLowerCase().endsWith('memo_data.json')){
-      metaPath=path; break;
+    if(path.toLowerCase().includes('memo_data.json')){
+      metaPath=path; 
+      showDebug('memo_data.json発見: ' + path);
+      break;
     }
   }
-  if(!metaPath){ showErr('memo_data.json が見つかりません'); return; }
+  if(!metaPath){ 
+    showErr('memo_data.json が見つかりません'); 
+    showDebug('memo_data.jsonが見つかりませんでした');
+    return; 
+  }
 
   let meta;
   try{
-    meta=JSON.parse(await zip.file(metaPath).async('string'));
+    const jsonText = await zip.file(metaPath).async('string');
+    showDebug('JSON内容のプレビュー: ' + jsonText.substring(0, 500) + '...');
+    meta=JSON.parse(jsonText);
+    showDebug('JSON解析成功、要素数: ' + (Array.isArray(meta) ? meta.length : 'オブジェクト'));
   }catch(e){
-    showErr('memo_data.json の読み込みに失敗しました'); return;
+    showErr('memo_data.json の読み込みに失敗しました: ' + e.message); 
+    return;
+  }
+
+  // metaがオブジェクトの場合、配列に変換を試行
+  if(!Array.isArray(meta)){
+    showDebug('metaは配列ではありません。オブジェクトの構造: ' + JSON.stringify(Object.keys(meta)));
+    // 可能性: {data: [...]} のような構造
+    if(meta.data && Array.isArray(meta.data)){
+      meta = meta.data;
+      showDebug('meta.dataを使用、要素数: ' + meta.length);
+    } else if(meta.items && Array.isArray(meta.items)){
+      meta = meta.items;
+      showDebug('meta.itemsを使用、要素数: ' + meta.length);
+    } else {
+      showErr('メタデータが期待される配列形式ではありません');
+      return;
+    }
+  }
+
+  // 各要素をチェック
+  showDebug('各要素のチェック開始');
+  for(let i = 0; i < Math.min(meta.length, 3); i++){
+    const item = meta[i];
+    showDebug(`要素${i}: createdAt=${item?.createdAt}, imagePaths=${JSON.stringify(item?.imagePaths)}`);
   }
 
   // 親=createdAtごとにグループ化
   const map={};
-  for(const item of meta){
-    if(!item.createdAt){ showErr('createdAt が無い要素があります'); return; }
-    if(!item.imagePaths||!item.imagePaths[0]){ showErr('imagePaths が無い要素があります'); return;}
+  for(let i = 0; i < meta.length; i++){
+    const item = meta[i];
+    showDebug(`処理中の要素${i}: ${JSON.stringify(item)}`);
+    
+    if(!item || typeof item !== 'object'){
+      showErr(`要素${i}が無効です: ${JSON.stringify(item)}`); 
+      return;
+    }
+    
+    if(!item.createdAt){ 
+      showErr(`要素${i}にcreatedAtがありません: ${JSON.stringify(item)}`); 
+      return; 
+    }
+    
+    if(!item.imagePaths){
+      showErr(`要素${i}にimagePathsがありません: ${JSON.stringify(item)}`); 
+      return;
+    }
+    
+    if(!Array.isArray(item.imagePaths)){
+      showErr(`要素${i}のimagePathsが配列ではありません: ${JSON.stringify(item.imagePaths)}`); 
+      return;
+    }
+    
+    if(item.imagePaths.length === 0){
+      showErr(`要素${i}のimagePathsが空の配列です`); 
+      return;
+    }
+    
+    if(!item.imagePaths[0]){ 
+      showErr(`要素${i}のimagePaths[0]が無効です: ${JSON.stringify(item.imagePaths[0])}`); 
+      return;
+    }
+
     const date=item.createdAt.slice(0,10);
     if(!map[date]) map[date]=[];
     map[date].push(item);
   }
 
+  showDebug('グループ化完了: ' + Object.keys(map).join(', '));
+
   // 読み込み & UI生成
   for(const date of Object.keys(map)){
+    showDebug(`日付${date}のグループ処理開始`);
+    
     const group=document.createElement('div'); group.className='group';
     const header=document.createElement('div'); header.className='group-header';
     header.innerHTML=`<span class="drag-handle">☰</span> <input type="date" value="${date}">`;
@@ -90,29 +177,46 @@ loadBtn.addEventListener('click', async()=>{
     group.appendChild(cardContainer);
 
     const cards=[];
-    for(const obj of map[date]){
+    for(let j = 0; j < map[date].length; j++){
+      const obj = map[date][j];
+      showDebug(`  カード${j}処理中: imagePaths[0] = ${obj.imagePaths[0]}`);
+      
       // imagePaths例: "/data/.../images/aaa.jpeg" → 後ろのファイル名を抽出
       const imageName=obj.imagePaths[0].split('/').pop();
+      showDebug(`  抽出した画像名: ${imageName}`);
+      
       // -> images/固定 + imageName
-      const imageFullPath=Object.keys(zip.files).find(p=>p.toLowerCase().endsWith('images/'+imageName.toLowerCase()));
+      const imageFullPath=Object.keys(zip.files).find(p=>p.toLowerCase().includes('images/'+imageName.toLowerCase()));
       if(!imageFullPath){
-        showErr('画像 '+imageName+' がZIP内images/に見つかりません'); return;
+        showErr(`画像 ${imageName} がZIP内images/に見つかりません`);
+        showDebug(`利用可能な画像ファイル: ${Object.keys(zip.files).filter(p=>p.toLowerCase().includes('images/')).join(', ')}`);
+        return;
       }
-      const blob=await zip.file(imageFullPath).async('blob');
+      
+      showDebug(`  画像ファイルパス: ${imageFullPath}`);
+      
+      try {
+        const blob=await zip.file(imageFullPath).async('blob');
+        showDebug(`  画像読み込み成功: ${blob.size} bytes`);
 
-      // カードUI
-      const card=document.createElement('div'); card.className='card';
-      const img=document.createElement('img'); img.src=URL.createObjectURL(blob); img.width=80;
-      const t=document.createElement('input'); t.placeholder='title'; t.value=obj.title||'';
-      const c=document.createElement('textarea'); c.placeholder='content'; c.rows=2; c.cols=30; c.value=obj.content||'';
-      card.append(img,document.createElement('br'),t,document.createElement('br'),c);
-      cardContainer.appendChild(card);
-      cards.push({imageName,blob,titleInput:t,contentInput:c,cardDom:card});
+        // カードUI
+        const card=document.createElement('div'); card.className='card';
+        const img=document.createElement('img'); img.src=URL.createObjectURL(blob); img.width=80;
+        const t=document.createElement('input'); t.placeholder='title'; t.value=obj.title||'';
+        const c=document.createElement('textarea'); c.placeholder='content'; c.rows=2; c.cols=30; c.value=obj.content||'';
+        card.append(img,document.createElement('br'),t,document.createElement('br'),c);
+        cardContainer.appendChild(card);
+        cards.push({imageName,blob,titleInput:t,contentInput:c,cardDom:card});
+      } catch(e) {
+        showErr(`画像${imageName}の読み込みに失敗: ${e.message}`);
+        return;
+      }
     }
     groupsDiv.appendChild(group);
     entryList.push({groupDom:group,createdAtInput:header.querySelector('input'),cards});
   }
 
+  showDebug('UI生成完了');
   downloadBtn.disabled=false;
 
   dragula([groupsDiv],{moves:(el,c,handle)=>handle.classList.contains('drag-handle')});
