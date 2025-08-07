@@ -13,6 +13,8 @@
 .card-simple {border:1px solid #aaa; margin:2px; padding:2px; display: inline-block; position: relative; width: 150px; text-align: center;}
 .drag-handle {cursor:move;}
 .card-number {position: absolute; top: 2px; left: 2px; background: rgba(0,0,0,0.7); color: white; padding: 2px 4px; font-size: 12px; border-radius: 3px;}
+.delete-btn {position: absolute; top: 2px; right: 2px; background: rgba(255,0,0,0.8); color: white; border: none; padding: 2px 6px; font-size: 12px; border-radius: 3px; cursor: pointer;}
+.delete-btn:hover {background: rgba(255,0,0,1);}
 .move-controls {margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px;}
 .move-input {width: 50px; margin: 0 5px;}
 .phase-buttons {margin: 15px 0; text-align: center;}
@@ -294,6 +296,23 @@ function buildDetailView() {
       numberDiv.className = 'card-number';
       numberDiv.textContent = '1'; // updateCardNumbers()で更新される
       
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.textContent = '×';
+      deleteBtn.title = '除外';
+      deleteBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (confirm('この画像を除外しますか？')) {
+          card.remove();
+          // cardsリストからも削除
+          const cardIndex = cards.indexOf(cards.find(c => c.cardDom === card));
+          if (cardIndex > -1) {
+            cards.splice(cardIndex, 1);
+          }
+          updateCardNumbers();
+        }
+      });
+      
       const img = document.createElement('img');
       img.src = URL.createObjectURL(cardData.blob);
       img.width = 80;
@@ -309,6 +328,7 @@ function buildDetailView() {
       contentTextarea.value = cardData.originalData.content || '';
       
       card.appendChild(numberDiv);
+      card.appendChild(deleteBtn);
       card.appendChild(img);
       card.appendChild(document.createElement('br'));
       card.appendChild(titleInput);
@@ -490,6 +510,18 @@ loadBtn.addEventListener('click', async () => {
     numberDiv.className = 'card-number';
     numberDiv.textContent = index + 1;
     
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'delete-btn';
+    deleteBtn.textContent = '×';
+    deleteBtn.title = '除外';
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (confirm('この画像を除外しますか？')) {
+        card.remove();
+        updateCardNumbers();
+      }
+    });
+    
     const img = document.createElement('img');
     img.src = URL.createObjectURL(item.blob);
     img.width = 140;
@@ -503,6 +535,7 @@ loadBtn.addEventListener('click', async () => {
     dateInput.style.marginTop = '5px';
     
     card.appendChild(numberDiv);
+    card.appendChild(deleteBtn);
     card.appendChild(img);
     card.appendChild(document.createElement('br'));
     card.appendChild(dateInput);
